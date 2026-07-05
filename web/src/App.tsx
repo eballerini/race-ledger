@@ -22,7 +22,7 @@ import {
 } from './types'
 import './App.css'
 
-type AppView = 'dashboard' | 'profiles' | 'data-tools'
+type AppView = 'dashboard' | 'statistics' | 'profiles' | 'data-tools'
 
 interface RaceFormState {
   profileId: string
@@ -57,6 +57,7 @@ const STANDARD_DISTANCES: StandardDistancePreset[] = [
 
 const APP_VIEWS: Array<{ key: AppView; label: string }> = [
   { key: 'dashboard', label: 'Dashboard' },
+  { key: 'statistics', label: 'Statistics' },
   { key: 'profiles', label: 'Profiles' },
   { key: 'data-tools', label: 'Data tools' },
 ]
@@ -122,6 +123,16 @@ function summarizeRaceSplit(race: RaceResult): SplitSummary {
     text: `${formatSeconds(firstHalfSeconds)} / ${formatSeconds(secondHalfSeconds)} · Positive (+${formatSeconds(diffSeconds)})`,
     trend: 'positive',
   }
+}
+
+function formatProgressGain(gainSeconds: number): string {
+  if (gainSeconds > 0) {
+    return `${formatSeconds(gainSeconds)} faster`
+  }
+  if (gainSeconds < 0) {
+    return `${formatSeconds(Math.abs(gainSeconds))} slower`
+  }
+  return 'No change'
 }
 
 function escapeCsvCell(value: string): string {
@@ -279,6 +290,98 @@ function App() {
       label: Array.from(point.labels).join(' / '),
     }))
   }, [filteredRaces])
+
+  const distanceStats = useMemo(() => {
+    const counts = new Map<string, { distancePreset: RaceResult['distancePreset']; distanceMeters: number; count: number }>()
+
+    for (const race of activeProfileRaces) {
+      const key = getRaceDistanceGroupKey(race)
+      const existing = counts.get(key)
+      if (existing) {
+        existing.count += 1
+      } else {
+        counts.set(key, {
+          distancePreset: race.distancePreset,
+          distanceMeters: race.distanceMeters,
+          count: 1,
+        })
+      }
+    }
+
+    return Array.from(counts.values())
+      .sort((left, right) => left.distanceMeters - right.distanceMeters)
+      .map((item) => ({
+        ...item,
+        label: formatDistanceLabel(item.distancePreset, item.distanceMeters),
+      }))
+  }, [activeProfileRaces])
+
+  const locationStats = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const race of activeProfileRaces) {
+      const location = race.locationText.trim()
+      counts.set(location, (counts.get(location) ?? 0) + 1)
+    }
+
+    return Array.from(counts.entries())
+      .map(([location, count]) => ({ location, count }))
+      .sort((left, right) => {
+        if (left.count === right.count) {
+          return left.location.localeCompare(right.location)
+        }
+        return right.count - left.count
+      })
+  }, [activeProfileRaces])
+
+  const progressionStats = useMemo(() => {
+    const groups = new Map<
+      string,
+      { distancePreset: RaceResult['distancePreset']; distanceMeters: number; races: RaceResult[] }
+    >()
+
+    for (const race of activeProfileRaces) {
+      const key = getRaceDistanceGroupKey(race)
+      const existing = groups.get(key)
+      if (existing) {
+        existing.races.push(race)
+      } else {
+        groups.set(key, {
+          distancePreset: race.distancePreset,
+          distanceMeters: race.distanceMeters,
+          races: [race],
+        })
+      }
+    }
+
+    return Array.from(groups.values())
+      .map((group) => {
+        const racesByDate = [...group.races].sort((left, right) => {
+          const dateOrder = left.date.localeCompare(right.date)
+          if (dateOrder !== 0) {
+            return dateOrder
+          }
+          return left.chipTimeSeconds - right.chipTimeSeconds
+        })
+
+        const firstRace = racesByDate[0]
+        const prRace = group.races.reduce((bestRace, race) =>
+          race.chipTimeSeconds < bestRace.chipTimeSeconds ? race : bestRace,
+        )
+
+        return {
+          distancePreset: group.distancePreset,
+          distanceMeters: group.distanceMeters,
+          firstRaceSeconds: firstRace.chipTimeSeconds,
+          prSeconds: prRace.chipTimeSeconds,
+          gainSeconds: firstRace.chipTimeSeconds - prRace.chipTimeSeconds,
+        }
+      })
+      .sort((left, right) => left.distanceMeters - right.distanceMeters)
+      .map((item) => ({
+        ...item,
+        label: formatDistanceLabel(item.distancePreset, item.distanceMeters),
+      }))
+  }, [activeProfileRaces])
 
   const activeProfileName = useMemo(() => {
     if (!activeProfileId) {
@@ -928,7 +1031,7 @@ function App() {
           </button>
         </form>
         <p className="helper-text">
-          Active profile drives dashboard race entry, results, PB chart, and heatmap.
+          Active profile drives dashboard race entry, results, PB chart, heatmap, and statistics.
         </p>
 
         <div className="field" style={{ marginTop: '0.9rem', maxWidth: '350px' }}>
@@ -977,6 +1080,102 @@ function App() {
           </p>
         )}
       </section>
+    )
+  }
+
+  function renderStatisticsPage() {
+    return (
+      <>
+        <section className="card">
+          <h2>Statistics · {activeProfileName}</h2>
+          <p className="helper-text">Total races: {activeProfileRaces.length}</p>
+        </section>
+
+        <section className="card">
+          <h2>Races by distance</h2>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Distance</th>
+                  <th>Races</th>
+                </tr>
+              </thead>
+              <tbody>
+                {distanceStats.map((stat) => (
+                  <tr key={`${stat.distancePreset}-${stat.distanceMeters}`}>
+                    <td>{stat.label}</td>
+                    <td>{stat.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!loading && distanceStats.length === 0 && (
+            <p className="empty-state" style={{ marginTop: '0.75rem' }}>
+              No races available yet for this profile.
+            </p>
+          )}
+        </section>
+
+        <section className="card">
+          <h2>Races by location</h2>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Location</th>
+                  <th>Races</th>
+                </tr>
+              </thead>
+              <tbody>
+                {locationStats.map((stat) => (
+                  <tr key={stat.location}>
+                    <td>{stat.location}</td>
+                    <td>{stat.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!loading && locationStats.length === 0 && (
+            <p className="empty-state" style={{ marginTop: '0.75rem' }}>
+              No location stats available yet for this profile.
+            </p>
+          )}
+        </section>
+
+        <section className="card">
+          <h2>Progression by distance</h2>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Distance</th>
+                  <th>First race</th>
+                  <th>PR</th>
+                  <th>Gain</th>
+                </tr>
+              </thead>
+              <tbody>
+                {progressionStats.map((stat) => (
+                  <tr key={`${stat.distancePreset}-${stat.distanceMeters}`}>
+                    <td>{stat.label}</td>
+                    <td>{formatSeconds(stat.firstRaceSeconds)}</td>
+                    <td>{formatSeconds(stat.prSeconds)}</td>
+                    <td>{formatProgressGain(stat.gainSeconds)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!loading && progressionStats.length === 0 && (
+            <p className="empty-state" style={{ marginTop: '0.75rem' }}>
+              No progression stats available yet for this profile.
+            </p>
+          )}
+        </section>
+      </>
     )
   }
 
@@ -1076,6 +1275,7 @@ function App() {
 
         <div className="page-stack">
           {activeView === 'dashboard' && renderDashboard()}
+          {activeView === 'statistics' && renderStatisticsPage()}
           {activeView === 'profiles' && renderProfilesPage()}
           {activeView === 'data-tools' && renderDataToolsPage()}
         </div>
