@@ -4,7 +4,7 @@ Local web app scaffold to track running race results by runner profile, with fil
 ## Tech stack
 - Frontend: React + TypeScript + Vite (`web/`)
 - Backend: Node + Express + TypeScript (`server/`)
-- Storage: local JSON file (`server/data/store.json`)
+- Storage: local JSON file (`~/Desktop/store.json`)
 - Geocoding: OpenStreetMap Nominatim (automatic, cached in JSON)
 
 ## What is scaffolded
@@ -49,4 +49,4 @@ Overwrite key is:
 
 ## Data file
 All data persists to:
-- `server/data/store.json`
+- `~/Desktop/store.json`
