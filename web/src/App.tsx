@@ -23,6 +23,8 @@ import {
 import './App.css'
 
 type AppView = 'dashboard' | 'statistics' | 'profiles' | 'data-tools'
+type ResultsSortColumn = 'name' | 'distance' | 'date' | 'location' | 'chipTime' | 'pace'
+type SortDirection = 'asc' | 'desc'
 
 interface RaceFormState {
   profileId: string
@@ -68,18 +70,28 @@ interface SplitSummary {
 }
 
 function formatPacePerKm(chipTimeSeconds: number, distanceMeters: number): string {
-  if (distanceMeters <= 0) {
+  const paceSecondsPerKm = getPaceSecondsPerKm(chipTimeSeconds, distanceMeters)
+
+  if (typeof paceSecondsPerKm !== 'number') {
     return '—'
+  }
+
+  return `${formatSeconds(paceSecondsPerKm)} /km`
+}
+
+function getPaceSecondsPerKm(chipTimeSeconds: number, distanceMeters: number): number | null {
+  if (distanceMeters <= 0) {
+    return null
   }
 
   const distanceKm = distanceMeters / 1000
   const paceSecondsPerKm = chipTimeSeconds / distanceKm
 
   if (!Number.isFinite(paceSecondsPerKm) || paceSecondsPerKm <= 0) {
-    return '—'
+    return null
   }
 
-  return `${formatSeconds(paceSecondsPerKm)} /km`
+  return paceSecondsPerKm
 }
 
 function getRaceDistanceGroupKey(race: Pick<RaceResult, 'distancePreset' | 'distanceMeters'>): string {
@@ -166,6 +178,8 @@ function App() {
   )
   const [yearFilter, setYearFilter] = useState('ALL')
   const [searchFilter, setSearchFilter] = useState('')
+  const [resultsSortColumn, setResultsSortColumn] = useState<ResultsSortColumn>('date')
+  const [resultsSortDirection, setResultsSortDirection] = useState<SortDirection>('desc')
 
   const [pbDistance, setPbDistance] = useState<StandardDistancePreset>('10K')
   const [importSummary, setImportSummary] = useState<CsvImportSummary | null>(null)
@@ -195,6 +209,28 @@ function App() {
   }, [activeProfileRaces])
 
   const filteredRaces = useMemo(() => {
+    const compareRaces = (left: RaceResult, right: RaceResult): number => {
+      switch (resultsSortColumn) {
+        case 'name':
+          return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
+        case 'distance':
+          return left.distanceMeters - right.distanceMeters
+        case 'date':
+          return left.date.localeCompare(right.date)
+        case 'location':
+          return left.locationText.localeCompare(right.locationText, undefined, { sensitivity: 'base' })
+        case 'chipTime':
+          return left.chipTimeSeconds - right.chipTimeSeconds
+        case 'pace': {
+          const leftPace = getPaceSecondsPerKm(left.chipTimeSeconds, left.distanceMeters) ?? Number.POSITIVE_INFINITY
+          const rightPace =
+            getPaceSecondsPerKm(right.chipTimeSeconds, right.distanceMeters) ?? Number.POSITIVE_INFINITY
+          return leftPace - rightPace
+        }
+        default:
+          return 0
+      }
+    }
     return [...activeProfileRaces]
       .filter((race) => (distanceFilter === 'ALL' ? true : race.distancePreset === distanceFilter))
       .filter((race) => (yearFilter === 'ALL' ? true : race.date.startsWith(`${yearFilter}-`)))
@@ -207,13 +243,43 @@ function App() {
         return searchable.includes(query)
       })
       .sort((left, right) => {
+        const sortDirectionMultiplier = resultsSortDirection === 'asc' ? 1 : -1
+        const primaryOrder = compareRaces(left, right) * sortDirectionMultiplier
+        if (primaryOrder !== 0) {
+          return primaryOrder
+        }
+
         const dateOrder = right.date.localeCompare(left.date)
         if (dateOrder !== 0) {
           return dateOrder
         }
         return left.chipTimeSeconds - right.chipTimeSeconds
       })
-  }, [activeProfileRaces, distanceFilter, yearFilter, searchFilter])
+  }, [
+    activeProfileRaces,
+    distanceFilter,
+    yearFilter,
+    searchFilter,
+    resultsSortColumn,
+    resultsSortDirection,
+  ])
+
+  const getSortIndicator = (column: ResultsSortColumn): string => {
+    if (resultsSortColumn !== column) {
+      return '↕'
+    }
+    return resultsSortDirection === 'asc' ? '↑' : '↓'
+  }
+
+  const handleResultsSort = (column: ResultsSortColumn): void => {
+    if (resultsSortColumn === column) {
+      setResultsSortDirection((direction) => (direction === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+
+    setResultsSortColumn(column)
+    setResultsSortDirection(column === 'date' ? 'desc' : 'asc')
+  }
 
   const personalRecordRaceIds = useMemo(() => {
     const fastestByDistance = new Map<string, number>()
@@ -842,12 +908,60 @@ function App() {
             <table>
               <thead>
                 <tr>
-                  <th>Race</th>
-                  <th>Distance</th>
-                  <th>Date</th>
-                  <th>Location</th>
-                  <th>Chip time</th>
-                  <th>Pace (min/km)</th>
+                  <th>
+                    <button
+                      type="button"
+                      className="sort-button"
+                      onClick={() => handleResultsSort('name')}
+                    >
+                      Race <span aria-hidden="true">{getSortIndicator('name')}</span>
+                    </button>
+                  </th>
+                  <th>
+                    <button
+                      type="button"
+                      className="sort-button"
+                      onClick={() => handleResultsSort('distance')}
+                    >
+                      Distance <span aria-hidden="true">{getSortIndicator('distance')}</span>
+                    </button>
+                  </th>
+                  <th>
+                    <button
+                      type="button"
+                      className="sort-button"
+                      onClick={() => handleResultsSort('date')}
+                    >
+                      Date <span aria-hidden="true">{getSortIndicator('date')}</span>
+                    </button>
+                  </th>
+                  <th>
+                    <button
+                      type="button"
+                      className="sort-button"
+                      onClick={() => handleResultsSort('location')}
+                    >
+                      Location <span aria-hidden="true">{getSortIndicator('location')}</span>
+                    </button>
+                  </th>
+                  <th>
+                    <button
+                      type="button"
+                      className="sort-button"
+                      onClick={() => handleResultsSort('chipTime')}
+                    >
+                      Chip time <span aria-hidden="true">{getSortIndicator('chipTime')}</span>
+                    </button>
+                  </th>
+                  <th>
+                    <button
+                      type="button"
+                      className="sort-button"
+                      onClick={() => handleResultsSort('pace')}
+                    >
+                      Pace (min/km) <span aria-hidden="true">{getSortIndicator('pace')}</span>
+                    </button>
+                  </th>
                   <th>Half split</th>
                   <th>Result</th>
                   <th>Actions</th>
